@@ -25,8 +25,8 @@ COPY --from=backend /app/node_modules ./node_modules
 COPY --from=backend /app/src ./src
 COPY --from=backend /app/package.json ./
 
-# Copy frontend build
-COPY --from=frontend-builder /app/frontend/build ./frontend/build
+# Copy frontend build (Vite outputs to dist/)
+COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
 # Install serve for serving frontend
 RUN npm install -g serve

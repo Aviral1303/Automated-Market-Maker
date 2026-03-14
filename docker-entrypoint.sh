@@ -8,7 +8,7 @@ BACKEND_PID=$!
 sleep 2
 
 # Start frontend
-serve -s frontend/build -l 3000 &
+serve -s frontend/dist -l 3000 &
 FRONTEND_PID=$!
 
 # Wait for both processes

@@ -1,0 +1,26 @@
+# Symbol mappings for data providers
+
+pairs:
+  - symbol: "BTC/USDT"
+    binance: "BTC/USDT"
+    coingecko_id: "bitcoin"
+    base: "BTC"
+    quote: "USDT"
+
+  - symbol: "ETH/USDT"
+    binance: "ETH/USDT"
+    coingecko_id: "ethereum"
+    base: "ETH"
+    quote: "USDT"
+
+  - symbol: "ETH/USDC"
+    binance: "ETH/USDC"
+    coingecko_id: "ethereum"
+    base: "ETH"
+    quote: "USDC"
+
+  - symbol: "SOL/USDT"
+    binance: "SOL/USDT"
+    coingecko_id: "solana"
+    base: "SOL"
+    quote: "USDT"

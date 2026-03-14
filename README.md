@@ -2,19 +2,45 @@
 
 A complete implementation of an Automated Market Maker (AMM) for cryptocurrency trading, featuring a constant product formula similar to Uniswap V2.
 
-## Features
+---
 
-- **Smart Contract AMM**: Solidity implementation with constant product formula
-- **Swap Functionality**: Trade between two tokens with automatic pricing
-- **Liquidity Management**: Add and remove liquidity to earn trading fees
-- **Modern Frontend**: React-based UI with real-time updates
-- **Backend API**: Express.js server with AMM logic
-- **Comprehensive Testing**: Full test suite for smart contracts
-- **Price Impact Calculation**: Real-time price impact for trades
-- **Transaction History**: Track all swaps and liquidity operations
-- **Analytics Dashboard**: View pool statistics, volume, and metrics
-- **0.3% Trading Fee**: Standard DeFi trading fee structure
-- **Docker Support**: Easy deployment with Docker and Docker Compose
+## AMM Research Engine (New)
+
+A **production-grade quantitative research platform** for AMM analysis. See [`amm-research-engine/README.md`](amm-research-engine/README.md) for details.
+
+**Highlights:**
+- Real market data (Binance, CoinGecko, The Graph)
+- Multiple AMM models (Constant Product, Balancer, StableSwap)
+- Trading simulation with retail/arbitrageur/LP agents
+- Arbitrage detection, LP analytics, historical replay
+- Streamlit dashboard, Jupyter notebooks
+
+```bash
+cd amm-research-engine && pip install -r requirements.txt
+python scripts/run_simulation.py
+streamlit run dashboard/streamlit_app.py
+```
+
+---
+
+## AMM Demo — Features
+
+### Core
+- **Smart Contract AMM**: Solidity constant product (x×y=k), 0.3% fee
+- **Swap & Liquidity**: Add/remove liquidity, swap with live quotes
+- **React + Vite Frontend**: Dark UI with charts, pool stats, transaction history
+
+### Advanced
+- **Real Market Data**: Live CEX prices from CoinGecko/Binance
+- **Arbitrage Detection**: AMM vs CEX comparison, opportunity alerts
+- **MetaMask Wallet**: Connect wallet for future on-chain interaction
+- **Historical Backtest**: Simulate LP returns over ETH price history
+- **MEV Simulation**: Sandwich attack (front-run → victim → back-run)
+- **Impermanent Loss**: IL curve, calculator, slippage analysis
+
+### Deployment
+- **Testnet Ready**: Sepolia & Base Sepolia config
+- **Docker Support**: Single-command deployment
 
 ## Quick Start
 
@@ -56,6 +82,22 @@ This will start both the backend API (port 3001) and frontend (port 3000).
    npm run deploy
    ```
 
+4. **Deploy to Sepolia testnet**
+   ```bash
+   # Set PRIVATE_KEY and INFURA_URL in .env
+   npm run deploy:sepolia
+   ```
+
+## Interview Demo Script
+
+1. **Show real market data** — AMM vs CEX card shows live ETH price from CoinGecko
+2. **Execute a swap** — Demonstrate price impact and fee
+3. **Arbitrage** — Explain when spread > 30 bps creates opportunity
+4. **Backtest** — Run 24h/7d simulation, discuss LP fees vs IL
+5. **MEV** — Simulate sandwich, explain extractable value
+6. **Wallet** — Connect MetaMask (optional: switch to Sepolia)
+7. **Architecture** — Walk through `docs/ARCHITECTURE.md` and `docs/DESIGN_DECISIONS.md`
+
 ## API Endpoints
 
 ### Core Endpoints
@@ -72,6 +114,16 @@ This will start both the backend API (port 3001) and frontend (port 3000).
 ### Analytics Endpoints
 - `GET /api/transactions` - Get transaction history (optional: `?limit=50`)
 - `GET /api/stats` - Get pool statistics and metrics
+- `GET /api/price-history` - Price history for charts
+- `GET /api/slippage-curve` - Slippage by trade size
+- `GET /api/impermanent-loss-curve` - IL vs price ratio
+
+### Market Data & Research
+- `GET /api/market-price?pair=ETH/USDT` - Live CEX price (CoinGecko/Binance)
+- `GET /api/arbitrage?pair=ETH/USDT` - AMM vs CEX, arbitrage opportunity
+- `GET /api/ohlcv` - Historical OHLCV for backtesting
+- `GET /api/backtest?limit=24` - Simulate LP returns over price history
+- `POST /api/mev/simulate` - Sandwich attack simulation
 
 ## Smart Contract Features
 
@@ -129,9 +181,6 @@ npm run test:contracts
 
 # All tests (contracts + backend API)
 npm test
-
-# Frontend tests
-cd frontend && npm test
 ```
 
 ## Project Structure
@@ -143,11 +192,12 @@ AMM - Crypto/
 │   └── TestToken.sol  # ERC20 test tokens
 ├── src/backend/       # Backend API
 │   └── server.js      # Express.js server
-├── frontend/          # React frontend
+├── frontend/          # React + Vite frontend
 │   ├── src/
-│   │   ├── App.js     # Main component
-│   │   └── index.js   # Entry point
-│   └── public/        # Static assets
+│   │   ├── App.jsx    # Main app
+│   │   ├── api.js     # API client
+│   │   └── components/
+│   └── index.html
 ├── scripts/           # Deployment scripts
 ├── test/              # Test files
 ├── Dockerfile         # Docker configuration

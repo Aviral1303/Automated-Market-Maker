@@ -1,0 +1,28 @@
+# AMM Research Engine - Default Configuration
+
+data:
+  storage_path: "data/store"
+  binance:
+    enabled: true
+    # api_key: ${BINANCE_API_KEY}
+    # secret: ${BINANCE_SECRET}
+  coingecko:
+    enabled: true
+    # api_key: ${COINGECKO_API_KEY}  # Pro tier
+  thegraph:
+    enabled: true
+    subgraph_url: "https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v2"
+
+simulation:
+  default_fee_bps: 30
+  initial_reserve_a: 1000000
+  initial_reserve_b: 1000000
+
+arbitrage:
+  min_spread_bps: 35
+  amm_fee_bps: 30
+  max_trade_ratio: 0.05
+
+analytics:
+  il_price_range: [0.1, 10.0]
+  slippage_trade_sizes: [0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5]

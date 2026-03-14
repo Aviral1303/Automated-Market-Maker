@@ -1,0 +1,46 @@
+# AMM Research Engine - Dependencies
+# Python 3.10+
+
+# Core
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.11.0
+decimal>=1.0
+
+# Data ingestion
+ccxt>=4.0.0          # Binance, Coinbase, 100+ exchanges
+requests>=2.31.0
+websockets>=12.0
+aiohttp>=3.9.0
+
+# The Graph / on-chain (optional)
+gql[aio]>=3.4.0      # GraphQL client for The Graph
+
+# Storage
+pyarrow>=14.0.0      # Parquet
+sqlalchemy>=2.0.0
+
+# Configuration
+pyyaml>=6.0.0
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+
+# Visualization
+matplotlib>=3.7.0
+plotly>=5.18.0
+seaborn>=0.13.0
+
+# Dashboard
+streamlit>=1.28.0
+
+# Jupyter
+jupyter>=1.0.0
+ipywidgets>=8.0.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+
+# Optional: RL
+# gymnasium>=0.29.0
+# stable-baselines3>=2.0.0

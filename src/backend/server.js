@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
-const { ethers } = require('ethers');
 const BigNumber = require('bignumber.js');
+const { getMarketPrice, fetchOHLCV } = require('./marketData');
 require('dotenv').config();
 
 const app = express();
@@ -159,6 +159,20 @@ const ammCore = new AMMCore();
 // Transaction history
 const transactionHistory = [];
 
+// Price history for charts (timestamp, price A in B terms)
+const priceHistory = [];
+
+function recordPriceSnapshot() {
+    const reserves = ammCore.getReserves();
+    const rA = new BigNumber(reserves.reserveA);
+    const rB = new BigNumber(reserves.reserveB);
+    if (rA.gt(0)) {
+        const price = rB.div(rA).toNumber();
+        priceHistory.push({ t: Date.now(), p: price });
+        if (priceHistory.length > 500) priceHistory.shift();
+    }
+}
+
 // Helper function to add transaction to history
 function addTransaction(type, data) {
     transactionHistory.push({
@@ -178,9 +192,139 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'OK', message: 'AMM API is running' });
 });
 
+// Real market data: CEX price from Binance/CoinGecko
+app.get('/api/market-price', async (req, res) => {
+    try {
+        const pair = req.query.pair || 'ETH/USDT';
+        const result = await getMarketPrice(pair);
+        if (!result) {
+            return res.status(503).json({ success: false, error: 'Market data unavailable' });
+        }
+        res.json({ success: true, data: result });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// Arbitrage: compare AMM price vs CEX, detect opportunity
+app.get('/api/arbitrage', async (req, res) => {
+    try {
+        const pair = req.query.pair || 'ETH/USDT';
+        const reserves = ammCore.getReserves();
+        const rA = parseFloat(reserves.reserveA);
+        const rB = parseFloat(reserves.reserveB);
+        if (rA <= 0) {
+            return res.json({ success: true, data: { opportunity: false, reason: 'No liquidity' } });
+        }
+        const ammPrice = rB / rA; // price of A in B terms (e.g. ETH in USDT)
+        const marketPriceResult = await getMarketPrice(pair);
+        if (!marketPriceResult) {
+            return res.json({ success: true, data: { opportunity: false, reason: 'Market data unavailable' } });
+        }
+        const cexPrice = marketPriceResult.price;
+        const spreadBps = Math.abs(ammPrice - cexPrice) / cexPrice * 10000;
+        const feeBps = 30;
+        const opportunity = spreadBps > feeBps;
+        let direction = null;
+        let estimatedProfitBps = 0;
+        if (opportunity) {
+            if (ammPrice > cexPrice) {
+                direction = 'sell_on_amm';
+                estimatedProfitBps = spreadBps - feeBps;
+            } else {
+                direction = 'buy_on_amm';
+                estimatedProfitBps = spreadBps - feeBps;
+            }
+        }
+        res.json({
+            success: true,
+            data: {
+                ammPrice,
+                cexPrice,
+                spreadBps: Math.round(spreadBps),
+                feeBps,
+                opportunity,
+                direction,
+                estimatedProfitBps: Math.round(estimatedProfitBps),
+                source: marketPriceResult.source
+            }
+        });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// Historical OHLCV for backtesting
+app.get('/api/ohlcv', async (req, res) => {
+    try {
+        const symbol = req.query.symbol || 'ETH/USDT';
+        const interval = req.query.interval || '1h';
+        const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+        const data = await fetchOHLCV(symbol, interval, limit);
+        res.json({ success: true, data });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// Backtest: simulate AMM over historical price path
+app.get('/api/backtest', async (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 24, 168);
+        const ohlcv = await fetchOHLCV('ETH/USDT', '1h', limit);
+        if (!ohlcv.length) {
+            return res.json({ success: true, data: { error: 'No OHLCV data (Binance may be restricted)' } });
+        }
+        const initialReserve = 1000;
+        const prices = ohlcv.map((c) => c.close);
+        const p0 = prices[0];
+        let reserveA = initialReserve;
+        let reserveB = initialReserve * p0;
+        let totalFees = 0;
+        let totalVolume = 0;
+        const feeBps = 30;
+        const snapshots = [{ t: ohlcv[0].timestamp, reserveA, reserveB, price: p0, fees: 0, volume: 0 }];
+        for (let i = 1; i < prices.length; i++) {
+            const p = prices[i];
+            const priceChange = (p - prices[i - 1]) / prices[i - 1];
+            if (Math.abs(priceChange) > 0.001) {
+                const tradeSize = reserveA * 0.01;
+                const amountIn = tradeSize;
+                const amountInWithFee = amountIn * (1 - feeBps / 10000);
+                const amountOut = (amountInWithFee * reserveB) / (reserveA + amountInWithFee);
+                reserveA += amountIn;
+                reserveB -= amountOut;
+                totalFees += amountIn * (feeBps / 10000);
+                totalVolume += amountIn;
+            }
+            snapshots.push({ t: ohlcv[i].timestamp, reserveA, reserveB, price: reserveB / reserveA, fees: totalFees, volume: totalVolume });
+        }
+        const finalValue = reserveA * prices[prices.length - 1] + reserveB;
+        const holdValue = initialReserve * p0 * 2;
+        const il = ((finalValue - holdValue) / holdValue) * 100;
+        res.json({
+            success: true,
+            data: {
+                snapshots,
+                summary: {
+                    periods: prices.length,
+                    totalFees,
+                    totalVolume,
+                    impermanentLossPercent: il.toFixed(2),
+                    finalValue: finalValue.toFixed(2),
+                    holdValue: holdValue.toFixed(2),
+                },
+            },
+        });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 app.get('/api/reserves', (req, res) => {
     try {
         const reserves = ammCore.getReserves();
+        if (priceHistory.length === 0) recordPriceSnapshot();
         res.json({
             success: true,
             data: reserves
@@ -250,6 +394,7 @@ app.post('/api/swap', (req, res) => {
         };
 
         addTransaction('swap', swapData);
+        recordPriceSnapshot();
         
         res.json({
             success: true,
@@ -284,6 +429,7 @@ app.post('/api/liquidity/add', (req, res) => {
         };
 
         addTransaction('add_liquidity', liquidityData);
+        recordPriceSnapshot();
         
         res.json({
             success: true,
@@ -318,6 +464,7 @@ app.post('/api/liquidity/remove', (req, res) => {
         };
 
         addTransaction('remove_liquidity', removeData);
+        recordPriceSnapshot();
         
         res.json({
             success: true,
@@ -414,6 +561,139 @@ function calculatePriceImpact(amountIn, reserveIn, amountOut, reserveOut) {
 
 // Initialize with some liquidity for demo
 ammCore.addLiquidity('1000000', '1000000'); // 1M tokens each
+recordPriceSnapshot();
+
+// Slippage curve: returns [{ amountIn, amountOut, slippageBps }]
+app.get('/api/slippage-curve', (req, res) => {
+    try {
+        const reserves = ammCore.getReserves();
+        const tokenIn = req.query.tokenIn || 'A';
+        const reserveIn = parseFloat(tokenIn === 'A' ? reserves.reserveA : reserves.reserveB);
+        const reserveOut = parseFloat(tokenIn === 'A' ? reserves.reserveB : reserves.reserveA);
+        const spotPrice = reserveOut / reserveIn;
+        const ratios = [0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5];
+        const curve = ratios.map(r => {
+            const amountIn = reserveIn * r;
+            const amountOut = ammCore.getAmountOut(amountIn.toString(), reserveIn, reserveOut);
+            const execPrice = amountOut / amountIn;
+            const slippageBps = Math.abs(spotPrice - execPrice) / spotPrice * 10000;
+            return { amountIn, amountOut: parseFloat(amountOut), slippageBps: Math.round(slippageBps) };
+        });
+        res.json({ success: true, data: curve });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// Impermanent loss: IL = 2*sqrt(P/P0)/(1+P/P0) - 1
+app.get('/api/impermanent-loss', (req, res) => {
+    try {
+        const priceRatio = parseFloat(req.query.ratio) || 1;
+        const ratio = Math.max(0.1, Math.min(10, priceRatio));
+        const sqrtR = Math.sqrt(ratio);
+        const il = (2 * sqrtR / (1 + ratio) - 1) * 100;
+        res.json({ success: true, data: { priceRatio: ratio, impermanentLossPercent: il } });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// IL curve for chart (ratios from 0.1 to 10)
+app.get('/api/impermanent-loss-curve', (req, res) => {
+    try {
+        const steps = 80;
+        const curve = [];
+        for (let i = 0; i <= steps; i++) {
+            const ratio = 0.1 + (10 - 0.1) * (i / steps);
+            const sqrtR = Math.sqrt(ratio);
+            const il = (2 * sqrtR / (1 + ratio) - 1) * 100;
+            curve.push({ ratio, impermanentLossPercent: il });
+        }
+        res.json({ success: true, data: curve });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// Price history for charts
+app.get('/api/price-history', (req, res) => {
+    try {
+        const limit = Math.min(parseInt(req.query.limit) || 200, 500);
+        const data = priceHistory.slice(-limit);
+        res.json({ success: true, data });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// MEV / Sandwich attack simulation
+app.post('/api/mev/simulate', (req, res) => {
+    try {
+        const { victimAmountIn, tokenIn } = req.body;
+        const amountIn = parseFloat(victimAmountIn) || 1000;
+        const tin = tokenIn || 'A';
+        const reserves = ammCore.getReserves();
+        let rA = parseFloat(reserves.reserveA);
+        let rB = parseFloat(reserves.reserveB);
+        const feeMult = 0.997;
+        const getOut = (amtIn, resIn, resOut) => {
+            const inFee = amtIn * feeMult;
+            return (inFee * resOut) / (resIn + inFee);
+        };
+        const frontRunSize = amountIn * 0.5;
+        const frontRunOut = getOut(frontRunSize, tin === 'A' ? rA : rB, tin === 'A' ? rB : rA);
+        if (tin === 'A') { rA += frontRunSize; rB -= frontRunOut; } else { rB += frontRunSize; rA -= frontRunOut; }
+        const victimOut = getOut(amountIn, tin === 'A' ? rA : rB, tin === 'A' ? rB : rA);
+        if (tin === 'A') { rA += amountIn; rB -= victimOut; } else { rB += amountIn; rA -= victimOut; }
+        const backRunOut = getOut(frontRunOut, tin === 'A' ? rB : rA, tin === 'A' ? rA : rB);
+        const mevProfit = backRunOut - frontRunSize;
+        res.json({
+            success: true,
+            data: {
+                frontRun: { amountIn: frontRunSize, amountOut: frontRunOut },
+                victim: { amountIn, amountOut: victimOut },
+                backRun: { amountIn: frontRunOut, amountOut: backRunOut },
+                mevProfit,
+                mevProfitBps: (mevProfit / frontRunSize * 10000).toFixed(0),
+            },
+        });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// Concentrated liquidity: Uniswap V3 style - swap output for range [pa, pb]
+app.get('/api/concentrated-quote', (req, res) => {
+    try {
+        const amountIn = parseFloat(req.query.amountIn) || 100;
+        const pa = parseFloat(req.query.pa) || 0.9;
+        const pb = parseFloat(req.query.pb) || 1.1;
+        const pCurrent = parseFloat(req.query.pCurrent) || 1;
+        if (pCurrent <= pa || pCurrent >= pb) {
+            return res.json({ success: true, data: { amountOut: 0, inRange: false } });
+        }
+        const L = 10000;
+        const sqrtPa = Math.sqrt(pa);
+        const sqrtPb = Math.sqrt(pb);
+        const sqrtP = Math.sqrt(pCurrent);
+        const x = L * (1 / sqrtP - 1 / sqrtPb);
+        const y = L * (sqrtP - sqrtPa);
+        const amountInNum = amountIn;
+        const xNew = x + amountInNum;
+        const pNew = Math.pow(L / (L / sqrtPb + amountInNum), 2);
+        const yOut = L * (sqrtP - Math.sqrt(Math.min(pNew, pb)));
+        res.json({
+            success: true,
+            data: {
+                amountOut: Math.max(0, yOut),
+                inRange: true,
+                priceAfter: pNew,
+            },
+        });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
 
 app.listen(PORT, () => {
     console.log(`AMM API server running on port ${PORT}`);
