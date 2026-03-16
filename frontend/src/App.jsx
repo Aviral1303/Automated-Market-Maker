@@ -11,6 +11,7 @@ import { StatsBar }         from './components/StatsBar';
 import { BondingCurve }     from './components/BondingCurve';
 import { createWsConnection, getStats, getReserves, getPriceHistory, getTransactions } from './api';
 import { useOnChainReserves } from './hooks/useOnChainReserves';
+import { useOnChainTransactions } from './hooks/useOnChainTransactions';
 
 const TABS = [
   { id: 'swap',      label: 'Swap' },
@@ -92,6 +93,11 @@ export default function App() {
   };
   const tokens = poolTokens[activePool] || poolTokens['TKA/TKB'];
 
+  // On-chain transactions (real blockchain swaps) — prefer over backend when available
+  const { transactions: chainTxs, isLive: chainTxsLive, refetch: refetchChainTxs } = useOnChainTransactions(activePool, 20);
+  const displayTransactions = chainTxsLive && chainTxs.length > 0 ? chainTxs : transactions;
+  const showOnChainTxs = chainTxsLive && chainTxs.length > 0;
+
   return (
     <div className="min-h-screen bg-black text-white">
       <Header wsStatus={wsStatus} deployedCount={deployedCount} onTestnetClick={() => setActiveTab('testnet')} />
@@ -123,8 +129,9 @@ export default function App() {
           {activeTab === 'swap' && (
             <SwapLayout
               reserves={reserves} stats={stats} priceHistory={priceHistory}
-              transactions={transactions} tokens={tokens} activePool={activePool}
-              onSuccess={refresh} showMessage={showMessage}
+              transactions={displayTransactions} tokens={tokens} activePool={activePool}
+              onSuccess={refresh} showMessage={showMessage} refetchChainTxs={refetchChainTxs}
+              isOnChainTxs={showOnChainTxs}
             />
           )}
           {activeTab === 'pool' && (
@@ -135,9 +142,9 @@ export default function App() {
           )}
           {activeTab === 'analytics' && (
             <AnalyticsDashboard
-              priceHistory={priceHistory} transactions={transactions}
+              priceHistory={priceHistory} transactions={displayTransactions}
               stats={stats} reserves={reserves} activePool={activePool}
-              tokens={tokens}
+              tokens={tokens} isOnChainTxs={showOnChainTxs}
             />
           )}
           {activeTab === 'research' && (
@@ -154,7 +161,7 @@ export default function App() {
   );
 }
 
-function SwapLayout({ reserves, stats, priceHistory, transactions, tokens, activePool, onSuccess, showMessage }) {
+function SwapLayout({ reserves, stats, priceHistory, transactions, tokens, activePool, onSuccess, showMessage, refetchChainTxs, isOnChainTxs }) {
   const { reserves: chainRes, isLive } = useOnChainReserves(activePool);
   // Prefer on-chain reserves when available
   const liveReserves = chainRes
@@ -166,7 +173,8 @@ function SwapLayout({ reserves, stats, priceHistory, transactions, tokens, activ
       <div className="lg:col-span-2 space-y-4">
         <SwapCard
           reserves={liveReserves} tokens={tokens} activePool={activePool}
-          onSuccess={onSuccess} showMessage={showMessage}
+          onSuccess={() => { onSuccess?.(); refetchChainTxs?.(); }}
+          showMessage={showMessage}
           isLiveChain={isLive}
         />
         {/* Bonding curve */}
@@ -184,7 +192,7 @@ function SwapLayout({ reserves, stats, priceHistory, transactions, tokens, activ
       <div className="lg:col-span-3 space-y-4">
         <PoolStatsPanel stats={stats} reserves={liveReserves} tokens={tokens} isLive={isLive} chainRes={chainRes} />
         <PricePanel priceHistory={priceHistory} tokens={tokens} />
-        <RecentTradesPanel transactions={transactions} tokens={tokens} />
+        <RecentTradesPanel transactions={transactions} tokens={tokens} isOnChain={isOnChainTxs} />
       </div>
     </div>
   );
@@ -277,14 +285,25 @@ function PricePanel({ priceHistory, tokens }) {
   );
 }
 
-function RecentTradesPanel({ transactions, tokens }) {
+function RecentTradesPanel({ transactions, tokens, isOnChain }) {
   const swaps = transactions.filter(t => t.type === 'swap').slice(0, 8);
+  const explorerUrl = 'https://sepolia.etherscan.io';
 
   return (
     <div className="border border-border rounded-xl bg-surface p-4">
-      <h3 className="text-[10px] text-textDim uppercase tracking-widest mb-3">Recent Trades</h3>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-[10px] text-textDim uppercase tracking-widest">Recent Trades</h3>
+        {isOnChain && (
+          <span className="flex items-center gap-1 text-[9px] text-success/70 uppercase tracking-wider">
+            <span className="w-1 h-1 rounded-full bg-success live-dot" />
+            On-chain
+          </span>
+        )}
+      </div>
       {swaps.length === 0 ? (
-        <p className="text-[10px] text-textDim text-center py-4">No trades yet</p>
+        <p className="text-[10px] text-textDim text-center py-4">
+          {isOnChain ? 'No on-chain swaps yet. Connect MetaMask and swap to see them here.' : 'No trades yet'}
+        </p>
       ) : (
         <div className="space-y-1">
           {swaps.map(tx => {
@@ -292,13 +311,26 @@ function RecentTradesPanel({ transactions, tokens }) {
             const inSym  = isAtoB ? tokens.A.symbol : tokens.B.symbol;
             const outSym = isAtoB ? tokens.B.symbol : tokens.A.symbol;
             return (
-              <div key={tx.id} className="flex items-center justify-between text-[10px] py-1 border-b border-border last:border-0">
+              <div key={tx.id} className="flex items-center justify-between text-[10px] py-1 border-b border-border last:border-0 group">
                 <span className="font-mono text-white">
                   {parseFloat(tx.amountIn).toLocaleString(undefined, { maximumFractionDigits: 2 })} {inSym}
                   <span className="text-textDim mx-1">&rarr;</span>
                   {parseFloat(tx.amountOut).toLocaleString(undefined, { maximumFractionDigits: 2 })} {outSym}
                 </span>
-                <span className="text-textDim font-mono">{new Date(tx.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                <span className="flex items-center gap-1.5">
+                  <span className="text-textDim font-mono">{new Date(tx.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  {tx.txHash && (
+                    <a
+                      href={`${explorerUrl}/tx/${tx.txHash}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-success/70 hover:text-success text-[9px] opacity-0 group-hover:opacity-100 transition-opacity"
+                      title="View on Etherscan"
+                    >
+                      ↗
+                    </a>
+                  )}
+                </span>
               </div>
             );
           })}
